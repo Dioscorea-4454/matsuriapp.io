@@ -3,283 +3,194 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>カメラスルー（ライブプレビュー）</title>
+<title>夏祭りチケット管理App</title>
+
+<!-- QRコードライブラリ -->
+<script src="https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js"></script>
+
 <style>
-  :root {
-    --bg: #fff8e1;
-    --accent: #ff7043;
-    --muted: #666;
-  }
   body {
     margin: 0;
-    font-family: "Noto Sans JP", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-    background: var(--bg);
+    font-family: "Noto Sans JP", system-ui;
+    background: #fff8e1;
+    color: #333;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    padding: 12px;
-    color: #222;
+    gap: 10px;
+    padding: 16px;
   }
 
   h1 {
-    margin: 0;
     color: #6d4c41;
-    font-size: 1.1rem;
+    font-size: 1.2rem;
+    margin: 0.5rem 0;
   }
 
-  #camera-wrap {
-    position: relative;
-    width: min(720px, 96vw);
-    aspect-ratio: 3 / 4; /* スマホ縦想定。必要に応じて調整 */
-    background: #000;
+  #qr-reader {
+    width: min(480px, 90vw);
     border-radius: 12px;
     overflow: hidden;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.2);
   }
 
-  video {
+  #ticket-section {
+    width: min(480px, 90vw);
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    padding: 12px;
+  }
+
+  .ticket-btn {
+    display: block;
     width: 100%;
-    height: 100%;
-    object-fit: cover;
-    background: #000;
-    transform: scaleX(1); /* 前面カメラの鏡像はCSS反転で処理可能 */
-  }
-
-  /* 画面中央の読み取り枠（オーバーレイ） */
-  .overlay {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 70%;
-    height: 30%;
-    transform: translate(-50%, -50%);
-    border: 2px dashed rgba(255,255,255,0.85);
+    margin: 6px 0;
+    padding: 14px;
     border-radius: 10px;
-    box-shadow: 0 0 20px rgba(0,0,0,0.2) inset;
-    pointer-events: none;
-  }
-
-  /* UI */
-  .controls {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  select, button {
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid #ddd;
-    font-size: 0.95rem;
-  }
-  button.primary {
-    background: var(--accent);
-    color: #fff;
     border: none;
-  }
-  button.warn {
-    background: #e57373;
+    font-size: 1rem;
+    background: #ff7043;
     color: white;
-    border: none;
+    cursor: pointer;
+    transition: 0.2s;
+  }
+
+  .ticket-btn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+  }
+
+  .ticket-btn:hover:not(:disabled) {
+    background: #f4511e;
   }
 
   #status {
     font-size: 0.9rem;
-    color: var(--muted);
-    margin-top: 6px;
+    color: #666;
   }
 
-  /* キャプチャプレビュー */
-  #capturePreview {
-    margin-top: 8px;
-    max-width: 360px;
-    border-radius: 8px;
-    border: 1px solid #ddd;
-  }
-
-  @media (min-width: 800px) {
-    #camera-wrap { aspect-ratio: 4 / 3; }
+  #participantId {
+    font-weight: bold;
+    font-size: 1rem;
+    color: #333;
   }
 </style>
 </head>
 <body>
-  <h1>カメラスルー（ライブプレビュー）</h1>
 
-  <div class="controls">
-    <label for="cameraSelect">カメラ選択：</label>
-    <select id="cameraSelect"><option>読み込み中...</option></select>
+<h1>夏祭り チケット管理</h1>
 
-    <button id="startBtn" class="primary">起動</button>
-    <button id="stopBtn">停止</button>
-    <button id="fullscreenBtn">フルスクリーン</button>
-    <button id="captureBtn">キャプチャ保存</button>
-  </div>
+<div id="qr-reader"></div>
+<p id="status">QRコードを読み取ってください。</p>
 
-  <div id="camera-wrap">
-    <video id="video" playsinline autoplay muted></video>
-    <div class="overlay"></div>
-  </div>
-
-  <div id="status">カメラ状態：未起動</div>
-  <canvas id="capturePreview" style="display:none"></canvas>
+<div id="ticket-section" style="display:none;">
+  <p>参加者ID: <span id="participantId"></span></p>
+  <button class="ticket-btn" data-type="射的・輪投げ">射的・輪投げ 参加券を使用</button>
+  <button class="ticket-btn" data-type="焼きそば">焼きそば券を使用</button>
+  <button class="ticket-btn" data-type="ラムネ">ラムネ券を使用</button>
+  <button class="ticket-btn" data-type="アイスバー">アイスバー券を使用</button>
+</div>
 
 <script>
-(async () => {
-  const video = document.getElementById('video');
-  const cameraSelect = document.getElementById('cameraSelect');
-  const startBtn = document.getElementById('startBtn');
-  const stopBtn = document.getElementById('stopBtn');
-  const fullscreenBtn = document.getElementById('fullscreenBtn');
-  const captureBtn = document.getElementById('captureBtn');
-  const status = document.getElementById('status');
-  const capturePreview = document.getElementById('capturePreview');
+// ============================
+// 設定（環境に合わせて修正）
+// ============================
+const API_URL = "https://script.google.com/macros/s/AKfycbxxxxxxxxxxxxxx/exec"; // ← Apps Script デプロイURLに置き換え
 
-  let currentStream = null;
-  let devices = [];
-  let currentDeviceId = null;
+// ============================
+// QRコード読み取り設定
+// ============================
+const qrRegionId = "qr-reader";
+const html5QrCode = new Html5Qrcode(qrRegionId);
+let currentParticipantId = null;
+let scanning = true;
 
-  function setStatus(msg, isError = false){
-    status.textContent = "カメラ状態：" + msg;
-    status.style.color = isError ? '#b00020' : '';
-  }
+function setStatus(msg, isError = false){
+  const s = document.getElementById("status");
+  s.textContent = msg;
+  s.style.color = isError ? "#b00020" : "#666";
+}
 
-  // カメラデバイス一覧を取得して select にセット
-  async function enumerateCameras(){
-    try {
-      const list = await navigator.mediaDevices.enumerateDevices();
-      devices = list.filter(d => d.kind === 'videoinput');
-      cameraSelect.innerHTML = '';
+function onScanSuccess(decodedText, decodedResult) {
+  if (!scanning) return;
+  scanning = false;
 
-      if (devices.length === 0) {
-        cameraSelect.innerHTML = '<option>カメラが見つかりません</option>';
-        setStatus('カメラが見つかりません', true);
-        return;
-      }
+  // QRコードのURLに含まれる ?id=XXXX 形式を抽出
+  let idMatch = decodedText.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  let id = idMatch ? idMatch[1] : decodedText;
 
-      devices.forEach((d, i) => {
-        const label = d.label || `カメラ ${i+1}`;
-        const opt = document.createElement('option');
-        opt.value = d.deviceId;
-        opt.textContent = label;
-        cameraSelect.appendChild(opt);
-      });
+  currentParticipantId = id;
+  document.getElementById("participantId").textContent = id;
+  document.getElementById("ticket-section").style.display = "block";
+  setStatus("QR読み取り完了：ID = " + id);
 
-      // デフォルトで背面カメラを選ぶ（ラベルに back / rear が含まれていれば優先）
-      const rear = devices.find(d => /back|rear|環境|rear camera/i.test(d.label));
-      currentDeviceId = rear ? rear.deviceId : devices[0].deviceId;
-      cameraSelect.value = currentDeviceId;
-      setStatus('カメラ一覧を取得しました');
-    } catch (err) {
-      console.error(err);
-      cameraSelect.innerHTML = '<option>カメラ一覧取得に失敗</option>';
-      setStatus('カメラ一覧取得に失敗（ブラウザの許可を確認）', true);
-    }
-  }
+  // スキャン停止（次の利用時は再起動）
+  html5QrCode.stop().catch(() => {});
+}
 
-  // ストリーム開始
-  async function startCamera(deviceId){
-    stopCamera(); // 既存停止
-
-    const constraints = {
-      audio: false,
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        facingMode: deviceId ? undefined : { ideal: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }
-    };
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      currentStream = stream;
-      video.srcObject = stream;
-      await video.play();
-      setStatus('起動中 — カメラ映像表示中');
-    } catch (err) {
-      console.error('startCamera error', err);
-      setStatus('カメラ起動に失敗しました（許可またはデバイス）', true);
-      throw err;
-    }
-  }
-
-  // 停止
-  function stopCamera(){
-    if (currentStream) {
-      currentStream.getTracks().forEach(t => t.stop());
-      currentStream = null;
-      video.srcObject = null;
-      setStatus('停止中');
-    }
-  }
-
-  // フルスクリーン
-  function toggleFullscreen() {
-    const el = document.getElementById('camera-wrap');
-    if (!document.fullscreenElement) {
-      el.requestFullscreen?.();
-    } else {
-      document.exitFullscreen?.();
-    }
-  }
-
-  // キャプチャ（canvasに描画してダウンロード）
-  function captureImage(){
-    if (!video || video.readyState < 2) {
-      alert('映像が準備できていません');
+// カメラ初期化
+Html5Qrcode.getCameras()
+  .then(devices => {
+    if (devices.length === 0) {
+      setStatus("カメラが見つかりません。", true);
       return;
     }
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    capturePreview.width = w;
-    capturePreview.height = h;
-    const ctx = capturePreview.getContext('2d');
-    ctx.drawImage(video, 0, 0, w, h);
-    capturePreview.style.display = 'block';
-    // ダウンロード
-    capturePreview.toBlob(blob => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `capture_${new Date().toISOString().replace(/[:.]/g,'-')}.png`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }, 'image/png');
-  }
+    const backCamera = devices.find(d => /back|rear|環境/i.test(d.label));
+    const cameraId = backCamera ? backCamera.id : devices[0].id;
+    html5QrCode.start(
+      cameraId,
+      {
+        fps: 10,
+        qrbox: { width: 250, height: 250 }
+      },
+      onScanSuccess
+    ).then(() => setStatus("QRスキャン中..."))
+    .catch(err => setStatus("カメラ起動に失敗：" + err, true));
+  })
+  .catch(err => setStatus("カメラ取得エラー：" + err, true));
 
-  // イベントハンドラ
-  startBtn.addEventListener('click', async () => {
+// ============================
+// チケット使用API呼び出し処理
+// ============================
+document.querySelectorAll(".ticket-btn").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    if (!currentParticipantId) {
+      alert("QRコードを読み取ってください。");
+      return;
+    }
+
+    const type = btn.dataset.type;
+    btn.disabled = true;
+    setStatus(`「${type}」券を処理中...`);
+
     try {
-      await startCamera(cameraSelect.value || currentDeviceId);
-    } catch(e) { /* エラーは上で処理 */ }
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "use_ticket",
+          id: currentParticipantId,
+          ticketType: type,
+          timestamp: new Date().toISOString()
+        })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setStatus(`✅ ${type}券を使用しました。在庫: ${data.remaining ?? "N/A"}`);
+      } else {
+        setStatus(`⚠️ ${data.message || "使用できません"}`, true);
+      }
+    } catch (e) {
+      console.error(e);
+      setStatus("通信エラー。ネット接続を確認してください。", true);
+    } finally {
+      btn.disabled = false;
+    }
   });
-
-  stopBtn.addEventListener('click', () => stopCamera());
-  fullscreenBtn.addEventListener('click', toggleFullscreen);
-  captureBtn.addEventListener('click', captureImage);
-
-  cameraSelect.addEventListener('change', (e) => {
-    currentDeviceId = e.target.value;
-    // 自動で切り替える（必要なら）
-    startCamera(currentDeviceId).catch(()=>{});
-  });
-
-  // 初期化：ユーザーが getUserMedia を許可していないと label が空のため、一度許可を得るために短く起動 -> 列挙 -> 停止の流れを試す
-  try {
-    // 一時的にカメラ許可を試みてデバイスラベル取得を容易にする
-    await navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
-      s.getTracks().forEach(t => t.stop());
-    }).catch(()=>{});
-  } catch(e) {
-    /* 無視して次へ */
-  }
-
-  await enumerateCameras();
-
-  // 自動起動（ページロード時にカメラを自動で開きたいならコメントを外す）
-  // startCamera(currentDeviceId).catch(()=>{});
-})();
+});
 </script>
+
 </body>
 </html>
