@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>カメラスルー（ライブプレビュー）</title>
+<style>
+  :root {
+    --bg: #fff8e1;
+    --accent: #ff7043;
+    --muted: #666;
+  }
+  body {
+    margin: 0;
+    font-family: "Noto Sans JP", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    color: #222;
+  }
+
+  h1 {
+    margin: 0;
+    color: #6d4c41;
+    font-size: 1.1rem;
+  }
+
+  #camera-wrap {
+    position: relative;
+    width: min(720px, 96vw);
+    aspect-ratio: 3 / 4; /* スマホ縦想定。必要に応じて調整 */
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+  }
+
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+    transform: scaleX(1); /* 前面カメラの鏡像はCSS反転で処理可能 */
+  }
+
+  /* 画面中央の読み取り枠（オーバーレイ） */
+  .overlay {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 70%;
+    height: 30%;
+    transform: translate(-50%, -50%);
+    border: 2px dashed rgba(255,255,255,0.85);
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.2) inset;
+    pointer-events: none;
+  }
+
+  /* UI */
+  .controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  select, button {
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid #ddd;
+    font-size: 0.95rem;
+  }
+  button.primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+  }
+  button.warn {
+    background: #e57373;
+    color: white;
+    border: none;
+  }
+
+  #status {
+    font-size: 0.9rem;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  /* キャプチャプレビュー */
+  #capturePreview {
+    margin-top: 8px;
+    max-width: 360px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+  }
+
+  @media (min-width: 800px) {
+    #camera-wrap { aspect-ratio: 4 / 3; }
+  }
+</style>
+</head>
+<body>
+  <h1>カメラスルー（ライブプレビュー）</h1>
+
+  <div class="controls">
+    <label for="cameraSelect">カメラ選択：</label>
+    <select id="cameraSelect"><option>読み込み中...</option></select>
+
+    <button id="startBtn" class="primary">起動</button>
+    <button id="stopBtn">停止</button>
+    <button id="fullscreenBtn">フルスクリーン</button>
+    <button id="captureBtn">キャプチャ保存</button>
+  </div>
+
+  <div id="camera-wrap">
+    <video id="video" playsinline autoplay muted></video>
+    <div class="overlay"></div>
+  </div>
+
+  <div id="status">カメラ状態：未起動</div>
+  <canvas id="capturePreview" style="display:none"></canvas>
+
+<script>
+(async () => {
+  const video = document.getElementById('video');
+  const cameraSelect = document.getElementById('cameraSelect');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const captureBtn = document.getElementById('captureBtn');
+  const status = document.getElementById('status');
+  const capturePreview = document.getElementById('capturePreview');
+
+  let currentStream = null;
+  let devices = [];
+  let currentDeviceId = null;
+
+  function setStatus(msg, isError = false){
+    status.textContent = "カメラ状態：" + msg;
+    status.style.color = isError ? '#b00020' : '';
+  }
+
+  // カメラデバイス一覧を取得して select にセット
+  async function enumerateCameras(){
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      devices = list.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = '';
+
+      if (devices.length === 0) {
+        cameraSelect.innerHTML = '<option>カメラが見つかりません</option>';
+        setStatus('カメラが見つかりません', true);
+        return;
+      }
+
+      devices.forEach((d, i) => {
+        const label = d.label || `カメラ ${i+1}`;
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = label;
+        cameraSelect.appendChild(opt);
+      });
+
+      // デフォルトで背面カメラを選ぶ（ラベルに back / rear が含まれていれば優先）
+      const rear = devices.find(d => /back|rear|環境|rear camera/i.test(d.label));
+      currentDeviceId = rear ? rear.deviceId : devices[0].deviceId;
+      cameraSelect.value = currentDeviceId;
+      setStatus('カメラ一覧を取得しました');
+    } catch (err) {
+      console.error(err);
+      cameraSelect.innerHTML = '<option>カメラ一覧取得に失敗</option>';
+      setStatus('カメラ一覧取得に失敗（ブラウザの許可を確認）', true);
+    }
+  }
+
+  // ストリーム開始
+  async function startCamera(deviceId){
+    stopCamera(); // 既存停止
+
+    const constraints = {
+      audio: false,
+      video: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        facingMode: deviceId ? undefined : { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      currentStream = stream;
+      video.srcObject = stream;
+      await video.play();
+      setStatus('起動中 — カメラ映像表示中');
+    } catch (err) {
+      console.error('startCamera error', err);
+      setStatus('カメラ起動に失敗しました（許可またはデバイス）', true);
+      throw err;
+    }
+  }
+
+  // 停止
+  function stopCamera(){
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop());
+      currentStream = null;
+      video.srcObject = null;
+      setStatus('停止中');
+    }
+  }
+
+  // フルスクリーン
+  function toggleFullscreen() {
+    const el = document.getElementById('camera-wrap');
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
+    }
+  }
+
+  // キャプチャ（canvasに描画してダウンロード）
+  function captureImage(){
+    if (!video || video.readyState < 2) {
+      alert('映像が準備できていません');
+      return;
+    }
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    capturePreview.width = w;
+    capturePreview.height = h;
+    const ctx = capturePreview.getContext('2d');
+    ctx.drawImage(video, 0, 0, w, h);
+    capturePreview.style.display = 'block';
+    // ダウンロード
+    capturePreview.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `capture_${new Date().toISOString().replace(/[:.]/g,'-')}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, 'image/png');
+  }
+
+  // イベントハンドラ
+  startBtn.addEventListener('click', async () => {
+    try {
+      await startCamera(cameraSelect.value || currentDeviceId);
+    } catch(e) { /* エラーは上で処理 */ }
+  });
+
+  stopBtn.addEventListener('click', () => stopCamera());
+  fullscreenBtn.addEventListener('click', toggleFullscreen);
+  captureBtn.addEventListener('click', captureImage);
+
+  cameraSelect.addEventListener('change', (e) => {
+    currentDeviceId = e.target.value;
+    // 自動で切り替える（必要なら）
+    startCamera(currentDeviceId).catch(()=>{});
+  });
+
+  // 初期化：ユーザーが getUserMedia を許可していないと label が空のため、一度許可を得るために短く起動 -> 列挙 -> 停止の流れを試す
+  try {
+    // 一時的にカメラ許可を試みてデバイスラベル取得を容易にする
+    await navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
+      s.getTracks().forEach(t => t.stop());
+    }).catch(()=>{});
+  } catch(e) {
+    /* 無視して次へ */
+  }
+
+  await enumerateCameras();
+
+  // 自動起動（ページロード時にカメラを自動で開きたいならコメントを外す）
+  // startCamera(currentDeviceId).catch(()=>{});
+})();
+</script>
+</body>
+</html>
