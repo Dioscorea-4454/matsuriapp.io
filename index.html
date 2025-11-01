@@ -1,154 +1,131 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>夏祭りチケット管理App</title>
 
-<!-- QRコードライブラリ -->
+<!-- ✅ QRコードライブラリ -->
 <script src="https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js"></script>
 
 <style>
   body {
     margin: 0;
-    font-family: "Noto Sans JP", system-ui;
+    font-family: "Noto Sans JP", sans-serif;
     background: #fff8e1;
     color: #333;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
-    padding: 16px;
+    padding: 1rem;
   }
-
   h1 {
     color: #6d4c41;
-    font-size: 1.2rem;
-    margin: 0.5rem 0;
+    margin-bottom: 0.5rem;
   }
-
   #qr-reader {
     width: min(480px, 90vw);
-    border-radius: 12px;
+    height: auto;
+    border: 2px solid #6d4c41;
+    border-radius: 10px;
     overflow: hidden;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+    background: #000;
   }
-
+  #status {
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+  }
   #ticket-section {
-    width: min(480px, 90vw);
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    padding: 12px;
+    display: none;
+    margin-top: 1rem;
+    padding: 1rem;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 0 5px rgba(0,0,0,0.1);
+    width: min(400px, 90vw);
   }
-
   .ticket-btn {
     display: block;
     width: 100%;
     margin: 6px 0;
     padding: 14px;
-    border-radius: 10px;
+    border-radius: 8px;
     border: none;
-    font-size: 1rem;
     background: #ff7043;
-    color: white;
+    color: #fff;
+    font-size: 1rem;
     cursor: pointer;
-    transition: 0.2s;
   }
-
   .ticket-btn:disabled {
     background: #ccc;
-    cursor: not-allowed;
-  }
-
-  .ticket-btn:hover:not(:disabled) {
-    background: #f4511e;
-  }
-
-  #status {
-    font-size: 0.9rem;
-    color: #666;
-  }
-
-  #participantId {
-    font-weight: bold;
-    font-size: 1rem;
-    color: #333;
   }
 </style>
 </head>
 <body>
 
-<h1>夏祭り チケット管理</h1>
+<h1>🎆 夏祭りチケット管理</h1>
 
 <div id="qr-reader"></div>
-<p id="status">QRコードを読み取ってください。</p>
+<p id="status">カメラを起動中です...</p>
 
-<div id="ticket-section" style="display:none;">
+<div id="ticket-section">
   <p>参加者ID: <span id="participantId"></span></p>
-  <button class="ticket-btn" data-type="射的・輪投げ">射的・輪投げ 参加券を使用</button>
+  <button class="ticket-btn" data-type="射的・輪投げ">射的・輪投げ券を使用</button>
   <button class="ticket-btn" data-type="焼きそば">焼きそば券を使用</button>
   <button class="ticket-btn" data-type="ラムネ">ラムネ券を使用</button>
   <button class="ticket-btn" data-type="アイスバー">アイスバー券を使用</button>
 </div>
 
 <script>
-// ============================
-// 設定（環境に合わせて修正）
-// ============================
-const API_URL = "https://script.google.com/macros/s/AKfycbxxxxxxxxxxxxxx/exec"; // ← Apps Script デプロイURLに置き換え
+const API_URL = "https://script.google.com/macros/s/AKfycbXXXXXXXXXXXX/exec"; // ←Apps ScriptデプロイURL
 
-// ============================
-// QRコード読み取り設定
-// ============================
-const qrRegionId = "qr-reader";
-const html5QrCode = new Html5Qrcode(qrRegionId);
+let html5QrCode;
 let currentParticipantId = null;
-let scanning = true;
 
-function setStatus(msg, isError = false){
+function setStatus(msg, error=false){
   const s = document.getElementById("status");
   s.textContent = msg;
-  s.style.color = isError ? "#b00020" : "#666";
+  s.style.color = error ? "red" : "#555";
 }
 
-function onScanSuccess(decodedText, decodedResult) {
-  if (!scanning) return;
-  scanning = false;
-
-  // QRコードのURLに含まれる ?id=XXXX 形式を抽出
-  let idMatch = decodedText.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  let id = idMatch ? idMatch[1] : decodedText;
-
-  currentParticipantId = id;
-  document.getElementById("participantId").textContent = id;
-  document.getElementById("ticket-section").style.display = "block";
-  setStatus("QR読み取り完了：ID = " + id);
-
-  // スキャン停止（次の利用時は再起動）
-  html5QrCode.stop().catch(() => {});
+function onScanSuccess(decodedText) {
+  // ✅ 一度読み取ったら停止
+  html5QrCode.stop().then(() => {
+    setStatus("QRコードを読み取りました！");
+    document.getElementById("participantId").textContent = decodedText;
+    document.getElementById("ticket-section").style.display = "block";
+    currentParticipantId = decodedText;
+  });
 }
 
-// カメラ初期化
-Html5Qrcode.getCameras()
-  .then(devices => {
+async function initCamera() {
+  try {
+    const devices = await Html5Qrcode.getCameras();
     if (devices.length === 0) {
-      setStatus("カメラが見つかりません。", true);
+      setStatus("カメラが見つかりません", true);
       return;
     }
-    const backCamera = devices.find(d => /back|rear|環境/i.test(d.label));
-    const cameraId = backCamera ? backCamera.id : devices[0].id;
-    html5QrCode.start(
-      cameraId,
-      {
-        fps: 10,
-        qrbox: { width: 250, height: 250 }
-      },
-      onScanSuccess
-    ).then(() => setStatus("QRスキャン中..."))
-    .catch(err => setStatus("カメラ起動に失敗：" + err, true));
-  })
-  .catch(err => setStatus("カメラ取得エラー：" + err, true));
+
+    const backCam = devices.find(d => /back|rear|環境/i.test(d.label)) || devices[0];
+    html5QrCode = new Html5Qrcode("qr-reader");
+
+    await html5QrCode.start(
+      backCam.id,
+      { fps: 10, qrbox: 250 },
+      onScanSuccess,
+      (err) => {} // エラーコールバック（無視）
+    );
+
+    setStatus("QRコードをスキャンしてください");
+  } catch (e) {
+    console.error(e);
+    setStatus("カメラ起動に失敗しました：" + e.message, true);
+  }
+}
+
+window.addEventListener("load", () => {
+  initCamera(); // ✅ ページロード完了後に初期化
+});
 
 // ============================
 // チケット使用API呼び出し処理
@@ -162,7 +139,7 @@ document.querySelectorAll(".ticket-btn").forEach(btn => {
 
     const type = btn.dataset.type;
     btn.disabled = true;
-    setStatus(`「${type}」券を処理中...`);
+    setStatus(`${type}券を処理中...`);
 
     try {
       const res = await fetch(API_URL, {
@@ -175,10 +152,10 @@ document.querySelectorAll(".ticket-btn").forEach(btn => {
           timestamp: new Date().toISOString()
         })
       });
-      const data = await res.json();
 
+      const data = await res.json();
       if (data.success) {
-        setStatus(`✅ ${type}券を使用しました。在庫: ${data.remaining ?? "N/A"}`);
+        setStatus(`✅ ${type}券を使用しました！（残り: ${data.remaining ?? "N/A"}）`);
       } else {
         setStatus(`⚠️ ${data.message || "使用できません"}`, true);
       }
