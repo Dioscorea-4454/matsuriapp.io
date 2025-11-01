@@ -1,172 +1,186 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>夏祭りチケット管理App</title>
-
-<!-- ✅ QRコードライブラリ -->
-<script src="https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js"></script>
-
-<style>
-  body {
-    margin: 0;
-    font-family: "Noto Sans JP", sans-serif;
-    background: #fff8e1;
-    color: #333;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 1rem;
-  }
-  h1 {
-    color: #6d4c41;
-    margin-bottom: 0.5rem;
-  }
-  #qr-reader {
-    width: min(480px, 90vw);
-    height: auto;
-    border: 2px solid #6d4c41;
-    border-radius: 10px;
-    overflow: hidden;
-    background: #000;
-  }
-  #status {
-    margin-top: 0.5rem;
-    font-size: 0.9rem;
-  }
-  #ticket-section {
-    display: none;
-    margin-top: 1rem;
-    padding: 1rem;
-    background: white;
-    border-radius: 10px;
-    box-shadow: 0 0 5px rgba(0,0,0,0.1);
-    width: min(400px, 90vw);
-  }
-  .ticket-btn {
-    display: block;
-    width: 100%;
-    margin: 6px 0;
-    padding: 14px;
-    border-radius: 8px;
-    border: none;
-    background: #ff7043;
-    color: #fff;
-    font-size: 1rem;
-    cursor: pointer;
-  }
-  .ticket-btn:disabled {
-    background: #ccc;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>夏祭り引換券管理アプリ</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fffaf0;
+      padding: 1rem;
+      text-align: center;
+    }
+    h1 {
+      font-size: 1.4rem;
+      color: #e65100;
+    }
+    select, input, button {
+      margin: 0.5rem;
+      padding: 0.5rem;
+      font-size: 1rem;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      margin: 1rem auto;
+      max-width: 400px;
+      padding: 1rem;
+    }
+    table {
+      margin: 1rem auto;
+      width: 100%;
+      border-collapse: collapse;
+    }
+    td {
+      border-bottom: 1px solid #eee;
+      padding: 0.3rem;
+    }
+    button {
+      border: none;
+      border-radius: 8px;
+      background: #ff7043;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #f4511e;
+    }
+    #message {
+      color: green;
+      margin-top: 1rem;
+    }
+    #error {
+      color: red;
+    }
+  </style>
 </head>
 <body>
+  <h1>🎆 夏祭り引換券管理アプリ</h1>
 
-<h1>🎆 夏祭りチケット管理</h1>
+  <div class="card">
+    <label>屋台を選択：</label>
+    <select id="boothSelect">
+      <option value="">-- 屋台を選択 --</option>
+      <option value="syateki">射的</option>
+      <option value="wanage">輪投げ</option>
+      <option value="yakisoba">焼きそば</option>
+      <option value="ramune">ラムネ</option>
+      <option value="icebar">アイスバー</option>
+    </select>
 
-<div id="qr-reader"></div>
-<p id="status">カメラを起動中です...</p>
+    <div>
+      <label>参加者ID：</label>
+      <input type="text" id="userIdInput" placeholder="QRコード or 手入力" />
+      <button id="loadUserBtn">読込</button>
+    </div>
 
-<div id="ticket-section">
-  <p>参加者ID: <span id="participantId"></span></p>
-  <button class="ticket-btn" data-type="射的・輪投げ">射的・輪投げ券を使用</button>
-  <button class="ticket-btn" data-type="焼きそば">焼きそば券を使用</button>
-  <button class="ticket-btn" data-type="ラムネ">ラムネ券を使用</button>
-  <button class="ticket-btn" data-type="アイスバー">アイスバー券を使用</button>
-</div>
+    <div id="userInfo"></div>
+  </div>
 
-<script>
-const API_URL = "https://script.google.com/macros/s/AKfycbXXXXXXXXXXXX/exec"; // ←Apps ScriptデプロイURL
+  <div id="message"></div>
+  <div id="error"></div>
 
-let html5QrCode;
-let currentParticipantId = null;
+  <script>
+    const API_URL = "https://script.google.com/macros/s/YOUR_DEPLOY_URL_HERE/exec";
 
-function setStatus(msg, error=false){
-  const s = document.getElementById("status");
-  s.textContent = msg;
-  s.style.color = error ? "red" : "#555";
-}
+    const boothSelect = document.getElementById("boothSelect");
+    const userInput = document.getElementById("userIdInput");
+    const loadUserBtn = document.getElementById("loadUserBtn");
+    const userInfoDiv = document.getElementById("userInfo");
+    const messageDiv = document.getElementById("message");
+    const errorDiv = document.getElementById("error");
 
-function onScanSuccess(decodedText) {
-  // ✅ 一度読み取ったら停止
-  html5QrCode.stop().then(() => {
-    setStatus("QRコードを読み取りました！");
-    document.getElementById("participantId").textContent = decodedText;
-    document.getElementById("ticket-section").style.display = "block";
-    currentParticipantId = decodedText;
-  });
-}
+    let currentUser = null;
 
-async function initCamera() {
-  try {
-    const devices = await Html5Qrcode.getCameras();
-    if (devices.length === 0) {
-      setStatus("カメラが見つかりません", true);
-      return;
-    }
-
-    const backCam = devices.find(d => /back|rear|環境/i.test(d.label)) || devices[0];
-    html5QrCode = new Html5Qrcode("qr-reader");
-
-    await html5QrCode.start(
-      backCam.id,
-      { fps: 10, qrbox: 250 },
-      onScanSuccess,
-      (err) => {} // エラーコールバック（無視）
-    );
-
-    setStatus("QRコードをスキャンしてください");
-  } catch (e) {
-    console.error(e);
-    setStatus("カメラ起動に失敗しました：" + e.message, true);
-  }
-}
-
-window.addEventListener("load", () => {
-  initCamera(); // ✅ ページロード完了後に初期化
-});
-
-// ============================
-// チケット使用API呼び出し処理
-// ============================
-document.querySelectorAll(".ticket-btn").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    if (!currentParticipantId) {
-      alert("QRコードを読み取ってください。");
-      return;
-    }
-
-    const type = btn.dataset.type;
-    btn.disabled = true;
-    setStatus(`${type}券を処理中...`);
-
-    try {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "use_ticket",
-          id: currentParticipantId,
-          ticketType: type,
-          timestamp: new Date().toISOString()
-        })
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        setStatus(`✅ ${type}券を使用しました！（残り: ${data.remaining ?? "N/A"}）`);
-      } else {
-        setStatus(`⚠️ ${data.message || "使用できません"}`, true);
+    loadUserBtn.addEventListener("click", async () => {
+      const id = userInput.value.trim();
+      if (!id) {
+        alert("参加者IDを入力してください");
+        return;
       }
-    } catch (e) {
-      console.error(e);
-      setStatus("通信エラー。ネット接続を確認してください。", true);
-    } finally {
-      btn.disabled = false;
+      await loadUser(id);
+    });
+
+    async function loadUser(id) {
+      messageDiv.textContent = "";
+      errorDiv.textContent = "";
+      userInfoDiv.innerHTML = "読み込み中...";
+      try {
+        const res = await fetch(`${API_URL}?action=getUser&id=${id}`);
+        const data = await res.json();
+        if (data.error) {
+          userInfoDiv.innerHTML = `<p style="color:red">${data.error}</p>`;
+          return;
+        }
+        currentUser = data;
+        renderUserInfo(data);
+      } catch (err) {
+        userInfoDiv.innerHTML = `<p style="color:red">読み込みエラー</p>`;
+      }
     }
-  });
-});
-</script>
+
+    function renderUserInfo(data) {
+      let html = `<h3>${data.name || "（名前なし）"}</h3>`;
+      html += `<table>`;
+      ["syateki","wanage","yakisoba","ramune","icebar"].forEach(type => {
+        if (data[type] !== undefined) {
+          html += `
+            <tr>
+              <td>${type}</td>
+              <td>残り：${data[type]}</td>
+              <td><input type="number" id="use_${type}" value="1" min="1" style="width:50px"></td>
+              <td><button onclick="useTicket('${type}')">使用</button></td>
+            </tr>`;
+        }
+      });
+      html += `</table>`;
+      userInfoDiv.innerHTML = html;
+    }
+
+    async function useTicket(type) {
+      const booth = boothSelect.value;
+      if (!booth) {
+        alert("屋台を選択してください");
+        return;
+      }
+      const quantity = parseInt(document.getElementById(`use_${type}`).value);
+      if (quantity <= 0) return;
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "useTicket",
+            user_id: currentUser.user_id,
+            booth_id: booth,
+            ticket_type: type,
+            quantity: quantity,
+            operator_id: booth // 簡易的に同一名で代用
+          })
+        });
+        const result = await res.json();
+        if (result.success) {
+          messageDiv.textContent = "✅ チケットを使用しました";
+          await loadUser(currentUser.user_id); // 更新反映
+        } else {
+          errorDiv.textContent = "エラー：" + JSON.stringify(result);
+        }
+      } catch (err) {
+        errorDiv.textContent = "通信エラー";
+      }
+    }
+
+    // URLクエリから自動読み込み（例：?id=A001）
+    window.addEventListener("load", () => {
+      const params = new URLSearchParams(location.search);
+      const id = params.get("id");
+      if (id) {
+        userInput.value = id;
+        loadUser(id);
+      }
+    });
+  </script>
 </body>
 </html>
